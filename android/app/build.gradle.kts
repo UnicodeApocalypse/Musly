@@ -37,6 +37,15 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
+        // Pass `--android-project-arg muslyDev=true` to build a side-by-side
+        // installable variant (different package id and launcher label).
+        if (project.hasProperty("muslyDev")) {
+            applicationIdSuffix = ".dev"
+            manifestPlaceholders["appLabel"] = "Musly Dev"
+        } else {
+            manifestPlaceholders["appLabel"] = "musly"
+        }
+
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64", "armeabi-v7a")
         }
