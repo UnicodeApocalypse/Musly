@@ -821,10 +821,11 @@ class _FavoritePlaylistRow extends StatefulWidget {
 }
 
 class _FavoritePlaylistRowState extends State<_FavoritePlaylistRow> {
-  /// `changed` timestamp of each playlist at its last fetch, shared across
-  /// rows so a playlist is fetched once per app session and again only when
-  /// the server reports a newer version.
-  static final Map<String, DateTime?> _fetchedVersions = {};
+  /// Last successfully fetched version of each playlist, shared across rows
+  /// so a playlist is fetched once per app session and again only when the
+  /// server reports a newer `changed` timestamp.
+  static final Map<String, Playlist> _fetched = {};
+  static final Set<String> _inFlight = {};
 
   @override
   void initState() {
@@ -840,31 +841,48 @@ class _FavoritePlaylistRowState extends State<_FavoritePlaylistRow> {
 
   void _refreshSongsIfStale() {
     final playlist = widget.playlist;
-    if (_fetchedVersions.containsKey(playlist.id) &&
-        _fetchedVersions[playlist.id] == playlist.changed) {
+    final fetched = _fetched[playlist.id];
+    if (_inFlight.contains(playlist.id) ||
+        (fetched != null && fetched.changed == playlist.changed)) {
       return;
     }
-    _fetchedVersions[playlist.id] = playlist.changed;
+    _inFlight.add(playlist.id);
 
     // Playlists from getPlaylists() carry no entries, and cached entries may
     // be outdated. Fetching stores the songs in the LibraryProvider, which
-    // rebuilds this row with them.
+    // rebuilds this row with them. A failed fetch is retried on next rebuild.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
       try {
+        if (!mounted) return;
         final fetched =
             await Provider.of<LibraryProvider>(context, listen: false)
                 .getPlaylist(playlist.id);
-        _fetchedVersions[playlist.id] = fetched.changed;
+        _fetched[playlist.id] = fetched;
+        if (mounted) setState(() {});
       } catch (e) {
         debugPrint('Error loading favorite playlist: $e');
+      } finally {
+        _inFlight.remove(playlist.id);
       }
     });
   }
 
+  /// The provider may hand back a summary without entries (e.g. right after a
+  /// library refresh); fall back to the fetched songs of the same version.
+  List<Song> _songs() {
+    final playlist = widget.playlist;
+    final songs = playlist.songs;
+    if (songs != null && songs.isNotEmpty) return songs;
+    final fetched = _fetched[playlist.id];
+    if (fetched != null && fetched.changed == playlist.changed) {
+      return fetched.songs ?? const <Song>[];
+    }
+    return const <Song>[];
+  }
+
   @override
   Widget build(BuildContext context) {
-    final songs = widget.playlist.songs ?? const <Song>[];
+    final songs = _songs();
     if (songs.isEmpty) return const SizedBox.shrink();
 
     final cardSize = widget.isDesktop ? 180.0 : 155.0;
